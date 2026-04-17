@@ -484,21 +484,26 @@ tbody tr:hover td { background: var(--surface2); }
         <div class="page-title">All Expenses</div>
         <div class="page-subtitle" id="all-count"></div>
       </div>
-      <div class="filter-bar">
-        <input type="text" id="search-box" placeholder="🔍 Search..." oninput="renderAll()">
-        <select id="filter-cat" onchange="renderAll()">
-          <option value="">All categories</option>
-          <option>Food & Dining</option><option>Transport</option><option>Entertainment</option>
-          <option>Housing & Rent</option><option>Education</option><option>Shopping</option>
-          <option>Health</option><option>Utilities</option><option>Travel</option><option>Other</option>
-        </select>
-        <select id="filter-period" onchange="renderAll()">
-          <option value="">All time</option>
-          <option value="today">Today</option>
-          <option value="7">Last 7 days</option>
-          <option value="30">Last 30 days</option>
-          <option value="month">This month</option>
-        </select>
+      <div class="filter-bar" style="justify-content: space-between;">
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <input type="text" id="search-box" placeholder="🔍 Search..." oninput="renderAll()">
+          <select id="filter-cat" onchange="renderAll()">
+            <option value="">All categories</option>
+            <option>Food & Dining</option><option>Transport</option><option>Entertainment</option>
+            <option>Housing & Rent</option><option>Education</option><option>Shopping</option>
+            <option>Health</option><option>Utilities</option><option>Travel</option><option>Other</option>
+          </select>
+          <select id="filter-period" onchange="renderAll()">
+            <option value="">All time</option>
+            <option value="today">Today</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="month">This month</option>
+          </select>
+        </div>
+        <button class="btn" style="background: var(--surface2);" onclick="exportCSV()">
+          <span style="opacity:0.7">⬇</span> Export CSV
+        </button>
       </div>
       <div class="card" style="padding: 0; overflow: hidden;">
         <div class="table-wrap" id="all-table"></div>
@@ -561,6 +566,46 @@ tbody tr:hover td { background: var(--surface2); }
   </div>
 </div>
 
+<!-- Edit Expense Modal -->
+<div class="confirm-overlay hidden" id="edit-overlay">
+  <div class="confirm-box" style="max-width: 420px;">
+    <div class="confirm-title">✏ Edit Expense</div>
+    <div class="form-grid" style="margin-top: 18px; margin-bottom: 22px;">
+      <div class="form-row">
+        <label>Date</label>
+        <input type="date" id="edit-date">
+      </div>
+      <div class="form-row">
+        <label>Amount (₹)</label>
+        <input type="number" id="edit-amount" min="0.01" step="0.01">
+      </div>
+      <div class="form-row full">
+        <label>Category</label>
+        <select id="edit-category">
+          <option value="Food & Dining">🍔 Food & Dining</option>
+          <option value="Transport">🚗 Transport</option>
+          <option value="Entertainment">🎮 Entertainment</option>
+          <option value="Housing & Rent">🏠 Housing & Rent</option>
+          <option value="Education">📚 Education</option>
+          <option value="Shopping">👕 Shopping</option>
+          <option value="Health">💊 Health</option>
+          <option value="Utilities">💡 Utilities</option>
+          <option value="Travel">✈️ Travel</option>
+          <option value="Other">📦 Other</option>
+        </select>
+      </div>
+      <div class="form-row full">
+        <label>Description</label>
+        <input type="text" id="edit-desc">
+      </div>
+    </div>
+    <div class="confirm-actions">
+      <button class="btn" onclick="closeEdit()">Cancel</button>
+      <button class="btn btn-primary" id="edit-save">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let expenses = [];
 let catChartInst = null, monthChartInst = null;
@@ -617,6 +662,15 @@ async function addExpenseAPI(data) {
 
 async function deleteExpenseAPI(id) {
   await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
+}
+
+async function editExpenseAPI(id, data) {
+  const res = await fetch(`/api/expenses/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  return res.json();
 }
 
 // ── Navigation ─────────────────────────────────────────
@@ -724,7 +778,8 @@ function renderAll() {
             <td style="font-weight:600">${e.description}</td>
             <td>${badge(e.category)}</td>
             <td style="text-align:right;font-weight:700;font-family:var(--mono)">${fmt(e.amount)}</td>
-            <td style="text-align:right">
+            <td style="text-align:right; white-space:nowrap;">
+              <button class="btn" style="padding: 4px 8px; font-size: 11px; margin-right: 4px;" onclick="openEdit(${e.id})">Edit</button>
               <button class="btn btn-danger" onclick="confirmDelete(${e.id}, '${e.description.replace(/'/g,"\\'")}', '${fmt(e.amount)}')">Delete</button>
             </td>
           </tr>`).join('')}
@@ -902,6 +957,52 @@ function closeConfirm() {
   pendingDeleteId = null;
 }
 document.getElementById('confirm-overlay').addEventListener('click', e => { if (e.target === e.currentTarget) closeConfirm(); });
+
+// ── Edit & Export ──────────────────────────────────────
+let pendingEditId = null;
+
+function exportCSV() {
+  window.location.href = '/api/expenses/export';
+}
+
+function openEdit(id) {
+  const expense = expenses.find(e => e.id === id);
+  if (!expense) return;
+  pendingEditId = id;
+  document.getElementById('edit-date').value = expense.date;
+  document.getElementById('edit-amount').value = expense.amount;
+  document.getElementById('edit-category').value = expense.category;
+  document.getElementById('edit-desc').value = expense.description;
+  document.getElementById('edit-overlay').classList.remove('hidden');
+  document.getElementById('edit-save').onclick = saveEdit;
+}
+
+async function saveEdit() {
+  const date = document.getElementById('edit-date').value;
+  const amount = parseFloat(document.getElementById('edit-amount').value);
+  const category = document.getElementById('edit-category').value;
+  const description = document.getElementById('edit-desc').value.trim();
+  
+  if (!amount || amount <= 0) { alert('Invalid amount'); return; }
+  
+  const result = await editExpenseAPI(pendingEditId, { date, amount, category, description });
+  if (result.success) {
+    const idx = expenses.findIndex(e => e.id === pendingEditId);
+    if (idx !== -1) expenses[idx] = result.expense;
+    closeEdit();
+    updateSidebar();
+    if (document.getElementById('page-all').classList.contains('active')) renderAll();
+    if (document.getElementById('page-dashboard').classList.contains('active')) renderDashboard();
+    if (document.getElementById('page-analytics').classList.contains('active')) renderAnalytics();
+    if (document.getElementById('page-monthly').classList.contains('active')) renderMonthly();
+  }
+}
+
+function closeEdit() {
+  document.getElementById('edit-overlay').classList.add('hidden');
+  pendingEditId = null;
+}
+document.getElementById('edit-overlay').addEventListener('click', e => { if (e.target === e.currentTarget) closeEdit(); });
 
 // ── Init ───────────────────────────────────────────────
 document.getElementById('add-date').value = today();
